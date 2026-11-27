@@ -1,3 +1,5 @@
+import os
+import glob
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -38,37 +40,37 @@ def read_csv_smart(path):
 
 @st.cache_data
 def load_data():
-    # 깃허브 폴더 위치에 맞게 경로를 자동으로 찾습니다
-    bike_paths = [
-        "서울특별시 공공자전거 일별 대여건수_26.1-6_2.csv",
-        "data/서울특별시 공공자전거 일별 대여건수_26.1-6_2.csv",
+    bike_candidates = [
+        "code/서울특별시 공공자전거 일별 대여건수_26.1-6.csv",
         "서울특별시 공공자전거 일별 대여건수_26.1-6.csv",
-        "data/서울특별시 공공자전거 일별 대여건수_26.1-6.csv",
     ]
-    weather_paths = [
+    weather_candidates = [
+        "code/OBS_ASOS_TIM_20261127163907.csv",
         "OBS_ASOS_TIM_20261127163907.csv",
-        "data/OBS_ASOS_TIM_20261127163907.csv",
     ]
+
+    all_csvs = glob.glob("**/*.csv", recursive=True)
+    for f in all_csvs:
+        if "자전거" in os.path.basename(f):
+            bike_candidates.insert(0, f)
+        elif "ASOS" in os.path.basename(f):
+            weather_candidates.insert(0, f)
 
     bike = None
-    for p in bike_paths:
-        try:
+    for p in bike_candidates:
+        if os.path.exists(p):
             bike = read_csv_smart(p)
             break
-        except Exception:
-            pass
     if bike is None:
-        raise FileNotFoundError("자전거 대여건수 CSV 파일을 찾을 수 없습니다.")
+        raise FileNotFoundError(f"자전거 파일을 못 찾았습니다. 발견된 파일: {all_csvs}")
 
     weather = None
-    for p in weather_paths:
-        try:
+    for p in weather_candidates:
+        if os.path.exists(p):
             weather = read_csv_smart(p)
             break
-        except Exception:
-            pass
     if weather is None:
-        raise FileNotFoundError("기온(OBS_ASOS_TIM) CSV 파일을 찾을 수 없습니다.")
+        raise FileNotFoundError(f"기온 파일을 못 찾았습니다. 발견된 파일: {all_csvs}")
 
     # 1) 자전거 데이터 전처리
     bike["대여일자"] = pd.to_datetime(bike["대여일자"])
@@ -83,12 +85,11 @@ def load_data():
         관측일수=("대여건수", "count")
     ).reset_index()
 
-    # 2) 기온 데이터 전처리 (시간별 ASOS 자료 -> 월별 집계)
+    # 2) 기온 데이터 전처리
     weather["일시"] = pd.to_datetime(weather["일시"])
     weather["월"] = weather["일시"].dt.month
     weather["날짜"] = weather["일시"].dt.date
 
-    # 일별 최고/최저 기온을 먼저 구한 뒤 월별 평균 산출
     daily_w = weather.groupby(["월", "날짜"]).agg(
         일평균기온=("기온(°C)", "mean"),
         일최고기온=("기온(°C)", "max"),
@@ -186,7 +187,7 @@ bike_plot.update_layout(
 st.plotly_chart(bike_plot, use_container_width=True)
 add_metric_row(b_slope, b_intercept, b_r2, "건/일")
 
-# 주춤한 구간 찾기 (7일 이동평균보다 3만 건 이상 급감한 날)
+# 주춤한 구간 요약표
 bike["차이"] = bike["대여건수"] - bike["7일 이동평균"]
 selected_lows = bike.index[bike["차이"] < -30000].tolist()
 
@@ -195,13 +196,13 @@ if selected_lows:
     low_summary["대여일자"] = low_summary["대여일자"].dt.strftime("%Y-%m-%d")
     low_summary = low_summary.rename(columns={
         "대여일자": "주춤 구간 날짜", "대여건수": "해당 날짜 대여 건수",
-        "7일 평균 대여 건수": "7일 평균 대여 건수"
+        "7일 이동평균": "7일 평균 대여 건수"
     })
     with st.expander("주춤한 구간의 날짜와 대여량 확인"):
         st.dataframe(
             low_summary.style.format({
                 "해당 날짜 대여 건수": "{:,.0f}",
-                "7일 이동평균": "{:,.0f}",
+                "7일 평균 대여 건수": "{:,.0f}",
             }), use_container_width=True, hide_index=True
         )
 
