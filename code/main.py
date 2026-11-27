@@ -2,534 +2,367 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
-
+import base64
+import gzip
+from io import BytesIO
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
+# =====================================
+# 기본 설정
+# =====================================
 
-# --------------------------------------------------
-# 1. 페이지 설정
-# --------------------------------------------------
 st.set_page_config(
-    page_title="공공자전거 이용량 회귀분석",
-    page_icon="🚲",
+    page_title="서울 기온과 공공자전거 회귀 분석",
+    page_icon="📈",
     layout="wide"
 )
 
-st.title("🚲 평균기온과 공공자전거 이용량의 회귀분석")
-st.write(
-    "평균기온이 공공자전거 일별 대여건수와 어떤 관계가 있는지 "
-    "산점도와 선형회귀분석으로 알아봅니다."
-)
+st.title("📈 서울 기온과 공공자전거 선형회귀 분석")
+st.caption("2026년 1월~6월 기상 및 공공자전거 데이터를 활용한 분석")
 
+# =====================================
+# 데이터 내장
+# 별도 파일 업로드 불필요
+# =====================================
 
-# --------------------------------------------------
-# 2. 데이터 처리 함수
-# --------------------------------------------------
-def read_csv_file(file):
-    """여러 인코딩을 시도하여 CSV 파일을 읽습니다."""
-    encodings = ["utf-8-sig", "utf-8", "cp949", "euc-kr"]
+WEATHER_DATA = """
+H4sIAB4iCWsC/22PPU4DMRCF+0i5A2WQ3lrzY+/aNVdJmwNwnLRIEUTbpAAlS0TaVOEA9BESBQUV45WjCHZtafzseZ+f3X13S3RWNmfsji97HL7Wp/XH9nW2PNzd9rv9+9P5/8nu53rytz/eu2kf3jbtqn2c3dtYLObzq3OkN50wRTyvtp8QkroiRqWuhi2Ni2BygorVam4TcyhCZICaxzVoXEIl4Oi8kWK1B0S4CIoDUhEtwWIS1FkC51S9oKpUxAjqwT2gSNmfi9qm93tORVAzAAM42UclmJu9KWWLjq48M3BJD+QHrGEly+4I0PyIfFf215dQm9PJL7sWfhf2AQAA
+"""
 
-    for encoding in encodings:
-        try:
-            file.seek(0)
-            return pd.read_csv(file, encoding=encoding)
-        except UnicodeDecodeError:
-            continue
+BIKE_DATA = """
+H4sIAB4iCWsC/12XvY6mNQyFey5jalbyf5JLpqOgRGK7Lem5BXpqHDujOV5pitFR3tjHfuLk+/jj379++/73938+fv24//7+48//Pn75EJL4Rpx/qcsScxQlRVtBgaJekXWPlXZFWaYoeoqxmcfnkeJSXkNcVyRiRnHfzyVVFE+tXLZAZEpRPURQLEdbF6FYjojHnnwd+bI4KF5Hy2OPQNfRkrVGoOfI0TtfR846V+4q3bIR/TqyTRsLIteRHc0vQORqhxvmKeUogodYjthpfH4dicseoleVaPRIriN3HzBIOVo8o19HHhqG4inRxud6HeWOhu3QckS0vkonjaIGEaF4beqmYyiWzXNooWhFnZ0hVuNIbOxZNm3vsee1qapQOmkUJVMa4rUZdBZ+Xig62cJAhWLEGYEKxSXHx8rraOVBwoIUim4yClIoWlZZUIwq3T6BYjmitcfnhWL6ZBTrcIkAS9IobnPB5AvF7Sr4eaHoIgcDSTvijXkWiitPF9osFI/uM8Tr6Miega6js3xjOwrFQ9u/8tRmKfaGlLRZOvk9ajfNzX7G1zfN4w4zQN9UM9Eh1gwgI0Vx1QBjGYHqxOSgDRRv4feKhZ8XSsd4rCyUMqWF0fkZggGmjRKTxR6bXkv7p5z4WXJGMep7Vh/fr1KXnbG2TPFhQfHU0oyFNS2cmDx8o1q2clO0VTwdnV6Lp7xSaDSlgGIhE8ygiEqr20YGZUzyCkIoiilO9GXktSsah2NppZ3lfMYctJ3lNBoq1w664cay5pI17wJBVUoNg2jWaLIlhopqO5YNdbSGk9McnGtrOvNkwZVtTWcaZh+JleGszUz3Gs67zAPE4jMWH0yr+Ew+Dpw4a0CZz6Kxto2xEuZVhHJec2us9VaPjRSqlZYnx1BdrdIoLrezY4SlaUglDmMODWlWN9CFdNPIF7anKOWcB4KZNaYXaHTRmCbQgpk1pnfwjR2io9EZ0d7oG+WV1zRzLENT6ncEgNqU5isAJoB/8pgT4KDabeN8WaF6rWmewLHU2oNBxfzhqDkXFNXoxASePP54JFIZwcpaXjRwx3vzmNGIDNQCMnf1gzs8IjcJ7sCva3lXolpd8x2OLvh1LUlF1XstPpn9EZlX8ChkE5lvr7NRbW/58hv5dttk5tBEigam0EDmQ2ls0EB6rIXFaSDVf1rbUyTfapjum5ubZ7SaIkaOdWweRQhb2TzmoYqxaxtLlUFtHvXIaFpPTcnifK2NR6ktfCLEo9QOch5vaubLFh5I8TAlw6kZD1PP3zmGarcyf0IcVLuVdmyo3UrePtR2nEjjvvxOoBLm25i6BQ+1e+kLjlU8TDVxGGq9VrYcLNmbm7EJE+N3An2NDdYbGDAa4lGar2QZO5x6bdHG6hakarrQQkPK+bYaS7tpao6tbEhddXj4nJo+g72pueFcx5ua91k8cnhNw4kTn5d73tgj2nmTO3DfNzbzDkxw/ge0/vUfTA8AAA==
+"""
 
-    raise ValueError("CSV 파일의 문자 인코딩을 확인해 주세요.")
-
-
-def parse_dates(series):
-    """YYYYMMDD 및 일반적인 날짜 형식을 처리합니다."""
-    text = series.astype(str).str.strip()
-
-    result = pd.to_datetime(
-        text,
-        format="%Y%m%d",
-        errors="coerce"
+def load_embedded_data(data):
+    raw = gzip.decompress(
+        base64.b64decode(data.strip())
+    )
+    return pd.read_csv(
+        BytesIO(raw),
+        encoding="cp949"
     )
 
-    missing = result.isna()
+weather = load_embedded_data(WEATHER_DATA)
+bike = load_embedded_data(BIKE_DATA)
 
-    if missing.any():
-        result.loc[missing] = pd.to_datetime(
-            text.loc[missing],
-            errors="coerce"
-        )
+# =====================================
+# 데이터 전처리
+# =====================================
 
-    return result
+weather["일시"] = pd.to_datetime(
+    weather["일시"],
+    format="%Y-%m"
+)
 
+bike["대여일자"] = pd.to_datetime(
+    bike["대여일자"]
+)
 
-def clean_number(series):
-    """숫자에 포함된 쉼표 등을 제거합니다."""
-    return pd.to_numeric(
-        series.astype(str).str.replace(",", "", regex=False).str.strip(),
-        errors="coerce"
+weather["월"] = weather["일시"].dt.month
+bike["월"] = bike["대여일자"].dt.month
+
+bike["경과일"] = (
+    bike["대여일자"] - bike["대여일자"].min()
+).dt.days
+
+# 월별 자전거 대여 통계
+bike_monthly = (
+    bike.groupby("월")
+    .agg(
+        월별_평균대여건수=("대여건수", "mean"),
+        월별_총대여건수=("대여건수", "sum")
     )
-
-
-# --------------------------------------------------
-# 3. CSV 파일 업로드
-# --------------------------------------------------
-st.subheader("📂 데이터 업로드")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    temperature_file = st.file_uploader(
-        "서울 기온 데이터 CSV",
-        type=["csv"],
-        key="temperature"
-    )
-
-with col2:
-    bicycle_file = st.file_uploader(
-        "공공자전거 이용 데이터 CSV",
-        type=["csv"],
-        key="bicycle"
-    )
-
-if temperature_file is None or bicycle_file is None:
-    st.info("기온 CSV 파일과 공공자전거 CSV 파일을 모두 업로드해 주세요.")
-    st.stop()
-
-
-# --------------------------------------------------
-# 4. CSV 읽기
-# --------------------------------------------------
-try:
-    temperature_raw = read_csv_file(temperature_file)
-    bicycle_raw = read_csv_file(bicycle_file)
-
-except Exception as e:
-    st.error(f"CSV 파일을 읽는 중 오류가 발생했습니다: {e}")
-    st.stop()
-
-
-# --------------------------------------------------
-# 5. 필요한 열 확인
-# --------------------------------------------------
-temperature_columns = ["날짜", "평균기온"]
-bicycle_columns = ["날짜", "요일", "대여건수"]
-
-missing_temp = [
-    col for col in temperature_columns
-    if col not in temperature_raw.columns
-]
-
-missing_bike = [
-    col for col in bicycle_columns
-    if col not in bicycle_raw.columns
-]
-
-if missing_temp or missing_bike:
-    st.error("CSV 파일에 필요한 열이 없습니다.")
-
-    if missing_temp:
-        st.write("기온 데이터에서 필요한 열:", missing_temp)
-
-    if missing_bike:
-        st.write("자전거 데이터에서 필요한 열:", missing_bike)
-
-    st.stop()
-
-
-# --------------------------------------------------
-# 6. 데이터 전처리
-# --------------------------------------------------
-temperature = temperature_raw[temperature_columns].copy()
-bicycle = bicycle_raw[bicycle_columns].copy()
-
-temperature["날짜"] = parse_dates(temperature["날짜"])
-bicycle["날짜"] = parse_dates(bicycle["날짜"])
-
-temperature["평균기온"] = clean_number(
-    temperature["평균기온"]
+    .reset_index()
 )
 
-bicycle["대여건수"] = clean_number(
-    bicycle["대여건수"]
-)
-
-temperature = temperature.dropna(
-    subset=["날짜", "평균기온"]
-)
-
-bicycle = bicycle.dropna(
-    subset=["날짜", "대여건수"]
-)
-
-# 날짜별 평균기온 계산
-temperature_daily = (
-    temperature
-    .groupby("날짜", as_index=False)
-    .agg({"평균기온": "mean"})
-)
-
-# 날짜별 대여건수 합계 계산
-bicycle_daily = (
-    bicycle
-    .groupby("날짜", as_index=False)
-    .agg({
-        "대여건수": "sum",
-        "요일": lambda x: x.dropna().mode().iloc[0]
-        if not x.dropna().mode().empty else "정보 없음"
-    })
-)
-
-# 날짜를 기준으로 두 데이터 결합
+# 기온과 자전거 자료 결합
 merged = pd.merge(
-    temperature_daily,
-    bicycle_daily,
-    on="날짜",
+    weather,
+    bike_monthly,
+    on="월",
     how="inner"
 )
 
-merged = merged.dropna(
-    subset=["평균기온", "대여건수"]
-)
+# =====================================
+# 선형회귀 함수
+# =====================================
 
-merged = merged.sort_values("날짜").reset_index(drop=True)
+def regression_graph(
+    df, x_col, y_col,
+    x_label, y_label, title,
+    point_labels=None
+):
 
-if len(merged) < 5:
-    st.error(
-        "분석에 사용할 수 있는 데이터가 너무 적습니다. "
-        "두 CSV 파일의 날짜가 겹치는지 확인해 주세요."
-    )
-    st.stop()
+    X = df[[x_col]].astype(float)
+    y = df[y_col].astype(float)
 
+    model = LinearRegression()
+    model.fit(X, y)
 
-# --------------------------------------------------
-# 7. 분석 데이터 확인
-# --------------------------------------------------
-st.subheader("📊 분석 데이터 확인")
+    prediction = model.predict(X)
 
-m1, m2, m3 = st.columns(3)
+    slope = model.coef_[0]
+    intercept = model.intercept_
+    r2 = model.score(X, y)
 
-m1.metric("분석 데이터 수", f"{len(merged):,}일")
-m2.metric(
-    "평균기온 평균",
-    f"{merged['평균기온'].mean():.2f}℃"
-)
-m3.metric(
-    "일평균 대여건수",
-    f"{merged['대여건수'].mean():,.0f}건"
-)
+    fig = go.Figure()
 
-with st.expander("결합된 데이터 확인하기"):
-    st.dataframe(
-        merged,
-        use_container_width=True
-    )
+    fig.add_trace(go.Scatter(
+        x=df[x_col],
+        y=y,
+        mode="markers",
+        name="실제 데이터",
+        text=point_labels,
+        marker=dict(
+            size=10,
+            opacity=0.8
+        )
+    ))
 
+    # 회귀 직선
+    order = np.argsort(X.values.flatten())
 
-# --------------------------------------------------
-# 8. 학습 데이터와 테스트 데이터 분리
-# --------------------------------------------------
-split_index = int(len(merged) * 0.8)
-
-if split_index < 2 or len(merged) - split_index < 2:
-    st.error("학습 및 테스트 데이터가 충분하지 않습니다.")
-    st.stop()
-
-train = merged.iloc[:split_index].copy()
-test = merged.iloc[split_index:].copy()
-
-X_train = train[["평균기온"]]
-y_train = train["대여건수"]
-
-X_test = test[["평균기온"]]
-y_test = test["대여건수"]
-
-
-# --------------------------------------------------
-# 9. 선형회귀 모델 학습
-# --------------------------------------------------
-model = LinearRegression()
-model.fit(X_train, y_train)
-
-slope = float(model.coef_[0])
-intercept = float(model.intercept_)
-
-y_pred = model.predict(X_test)
-
-mae = mean_absolute_error(y_test, y_pred)
-mse = mean_squared_error(y_test, y_pred)
-
-if len(test) >= 2:
-    r2 = r2_score(y_test, y_pred)
-else:
-    r2 = np.nan
-
-
-# --------------------------------------------------
-# 10. 회귀분석 결과
-# --------------------------------------------------
-st.subheader("📈 선형회귀분석 결과")
-
-metric1, metric2, metric3 = st.columns(3)
-
-metric1.metric("회귀계수", f"{slope:,.2f}")
-metric2.metric("절편", f"{intercept:,.2f}")
-metric3.metric(
-    "테스트 데이터 R²",
-    f"{r2:.4f}" if np.isfinite(r2) else "계산 불가"
-)
-
-st.write("**회귀식**")
-st.code(
-    f"예측 대여건수 = {intercept:.2f} + "
-    f"({slope:.2f} × 평균기온)"
-)
-
-st.write(
-    f"학습 데이터: {len(train):,}일 / "
-    f"테스트 데이터: {len(test):,}일"
-)
-
-
-# --------------------------------------------------
-# 11. 산점도와 회귀선
-# --------------------------------------------------
-st.subheader("☀️ 평균기온과 공공자전거 대여건수의 관계")
-
-# 학습 데이터의 회귀선 생성
-x_line = np.linspace(
-    merged["평균기온"].min(),
-    merged["평균기온"].max(),
-    100
-)
-
-y_line = model.predict(
-    pd.DataFrame({"평균기온": x_line})
-)
-
-# 산점도 생성
-fig = px.scatter(
-    merged,
-    x="평균기온",
-    y="대여건수",
-    hover_data={
-        "날짜": True,
-        "요일": True,
-        "평균기온": ":.2f",
-        "대여건수": ":,.0f"
-    },
-    labels={
-        "평균기온": "평균기온(℃)",
-        "대여건수": "일별 총 대여건수(건)"
-    },
-    title="평균기온과 공공자전거 대여건수의 회귀분석"
-)
-
-# 회귀선 추가
-fig.add_trace(
-    go.Scatter(
-        x=x_line,
-        y=y_line,
+    fig.add_trace(go.Scatter(
+        x=X.values.flatten()[order],
+        y=prediction[order],
         mode="lines",
-        name="선형회귀선",
-        line=dict(width=3)
-    )
-)
+        name="선형회귀 직선",
+        line=dict(
+            color="red",
+            width=3
+        )
+    ))
 
-fig.update_layout(
-    xaxis_title="평균기온(℃)",
-    yaxis_title="일별 총 대여건수(건)",
-    hovermode="closest",
-    height=600
-)
-
-st.plotly_chart(
-    fig,
-    use_container_width=True
-)
-
-
-# --------------------------------------------------
-# 12. 테스트 데이터 실제값과 예측값 비교
-# --------------------------------------------------
-st.subheader("🔍 실제 대여건수와 예측 대여건수 비교")
-
-fig_compare = go.Figure()
-
-fig_compare.add_trace(
-    go.Scatter(
-        x=test["날짜"],
-        y=y_test,
-        mode="lines+markers",
-        name="실제 대여건수"
-    )
-)
-
-fig_compare.add_trace(
-    go.Scatter(
-        x=test["날짜"],
-        y=y_pred,
-        mode="lines+markers",
-        name="예측 대여건수"
-    )
-)
-
-fig_compare.update_layout(
-    title="테스트 데이터의 실제값과 예측값",
-    xaxis_title="날짜",
-    yaxis_title="대여건수(건)",
-    height=500,
-    hovermode="x unified"
-)
-
-st.plotly_chart(
-    fig_compare,
-    use_container_width=True
-)
-
-
-# --------------------------------------------------
-# 13. 요일별 평균 대여건수
-# --------------------------------------------------
-st.subheader("📅 요일별 평균 공공자전거 대여건수")
-
-weekday_order = [
-    "월요일", "화요일", "수요일",
-    "목요일", "금요일", "토요일", "일요일"
-]
-
-weekday_data = merged.copy()
-
-# 요일 표기를 통일
-weekday_mapping = {
-    "월": "월요일",
-    "화": "화요일",
-    "수": "수요일",
-    "목": "목요일",
-    "금": "금요일",
-    "토": "토요일",
-    "일": "일요일",
-    "Mon": "월요일",
-    "Tue": "화요일",
-    "Wed": "수요일",
-    "Thu": "목요일",
-    "Fri": "금요일",
-    "Sat": "토요일",
-    "Sun": "일요일"
-}
-
-weekday_data["요일"] = (
-    weekday_data["요일"]
-    .astype(str)
-    .str.strip()
-    .replace(weekday_mapping)
-)
-
-weekday_average = (
-    weekday_data
-    .groupby("요일", as_index=False)["대여건수"]
-    .mean()
-)
-
-weekday_average["정렬순서"] = (
-    weekday_average["요일"]
-    .apply(
-        lambda x: weekday_order.index(x)
-        if x in weekday_order else 99
-    )
-)
-
-weekday_average = weekday_average.sort_values("정렬순서")
-
-fig_weekday = px.bar(
-    weekday_average,
-    x="요일",
-    y="대여건수",
-    title="요일별 평균 대여건수",
-    labels={
-        "요일": "요일",
-        "대여건수": "평균 대여건수(건)"
-    },
-    text_auto=".0f"
-)
-
-fig_weekday.update_layout(height=450)
-
-st.plotly_chart(
-    fig_weekday,
-    use_container_width=True
-)
-
-
-# --------------------------------------------------
-# 14. 모델 성능 평가
-# --------------------------------------------------
-st.subheader("🧪 회귀모델 성능 평가")
-
-score1, score2, score3 = st.columns(3)
-
-score1.metric("MAE", f"{mae:,.2f}")
-score2.metric("MSE", f"{mse:,.2f}")
-score3.metric(
-    "R²",
-    f"{r2:.4f}" if np.isfinite(r2) else "계산 불가"
-)
-
-st.markdown(
-    """
-    - **MAE**: 실제 대여건수와 예측 대여건수의 평균적인 차이입니다.
-    - **MSE**: 예측 오차를 제곱하여 평균한 값입니다. 큰 오차에 더 큰 영향을 받습니다.
-    - **R²**: 모델이 테스트 데이터의 변동을 얼마나 설명하는지 나타냅니다.
-    """
-)
-
-
-# --------------------------------------------------
-# 15. 결과 해석
-# --------------------------------------------------
-st.subheader("💡 분석 결과 해석")
-
-if slope > 0:
-    st.write(
-        f"평균기온이 1℃ 높아질 때 예측 대여건수는 "
-        f"약 {slope:,.2f}건 증가하는 경향을 보입니다."
-    )
-elif slope < 0:
-    st.write(
-        f"평균기온이 1℃ 높아질 때 예측 대여건수는 "
-        f"약 {abs(slope):,.2f}건 감소하는 경향을 보입니다."
-    )
-else:
-    st.write(
-        "평균기온에 따른 예측 대여건수의 선형적인 변화가 거의 없습니다."
+    fig.update_layout(
+        title=title,
+        xaxis_title=x_label,
+        yaxis_title=y_label,
+        template="plotly_white",
+        height=450,
+        hovermode="closest",
+        legend=dict(
+            orientation="h",
+            y=1.12
+        )
     )
 
-if np.isfinite(r2):
-    st.write(f"테스트 데이터의 R² 값은 {r2:.4f}입니다.")
+    return fig, slope, intercept, r2
+
+# =====================================
+# 데이터 요약
+# =====================================
+
+st.header("📊 데이터 한눈에 보기")
+
+c1, c2, c3 = st.columns(3)
+
+c1.metric(
+    "월별 기온 데이터",
+    f"{len(weather)}개"
+)
+
+c2.metric(
+    "일별 자전거 데이터",
+    f"{len(bike)}개"
+)
+
+c3.metric(
+    "결합된 월별 데이터",
+    f"{len(merged)}개"
+)
+
+st.caption(
+    "분석 기간: 2026년 1월 1일 ~ 6월 30일"
+)
+
+st.divider()
+
+# =====================================
+# 1. 월별 기온 변화
+# =====================================
+
+st.header("🌡️ 1. 월별 서울 평균기온 선형회귀")
 
 st.write(
-    "이 분석은 평균기온과 공공자전거 대여건수 사이의 관계를 "
-    "살펴본 것입니다. 실제 자전거 이용량은 요일, 강수량, "
-    "계절, 공휴일 등 다양한 요인의 영향을 받을 수 있으므로 "
-    "기온이 대여건수 변화의 직접적인 원인이라고 단정할 수는 없습니다."
+    "2026년 1월부터 6월까지 서울의 월별 평균기온이 "
+    "어떤 방향으로 변화했는지 알아봅니다."
 )
 
-
-# --------------------------------------------------
-# 16. 분석 데이터 다운로드
-# --------------------------------------------------
-st.subheader("📥 분석 데이터 다운로드")
-
-csv_data = merged.to_csv(
-    index=False,
-    encoding="utf-8-sig"
+fig1, s1, i1, r1 = regression_graph(
+    weather,
+    "월",
+    "평균기온(°C)",
+    "월",
+    "평균기온 (℃)",
+    "월별 평균기온과 선형회귀 직선",
+    weather["일시"].dt.strftime("%Y년 %m월")
 )
 
-st.download_button(
-    label="결합된 분석 데이터 CSV 다운로드",
-    data=csv_data,
-    file_name="bicycle_temperature_analysis.csv",
-    mime="text/csv"
+st.plotly_chart(
+    fig1,
+    use_container_width=True
 )
 
-st.success("분석이 완료되었습니다!")
+c1, c2, c3 = st.columns(3)
+
+c1.metric("기울기", f"{s1:.2f} ℃/월")
+c2.metric("절편", f"{i1:.2f}")
+c3.metric("결정계수 R²", f"{r1:.3f}")
+
+st.info(
+    f"회귀식: y = {s1:.2f}x + {i1:.2f}"
+)
+
+with st.expander("월별 기온 원본 데이터"):
+    st.dataframe(weather, use_container_width=True)
+
+st.divider()
+
+# =====================================
+# 2. 공공자전거 일별 대여량
+# =====================================
+
+st.header("🚲 2. 일별 공공자전거 대여 건수 선형회귀")
+
+st.write(
+    "날짜가 지날수록 공공자전거 대여 건수가 "
+    "어떤 추세로 변화하는지 살펴봅니다."
+)
+
+fig2, s2, i2, r2 = regression_graph(
+    bike,
+    "경과일",
+    "대여건수",
+    "2026년 1월 1일부터 경과한 날짜",
+    "대여 건수 (건)",
+    "일별 공공자전거 대여 건수와 선형회귀"
+)
+
+st.plotly_chart(
+    fig2,
+    use_container_width=True
+)
+
+c1, c2, c3 = st.columns(3)
+
+c1.metric("기울기", f"{s2:,.2f} 건/일")
+c2.metric("절편", f"{i2:,.2f} 건")
+c3.metric("결정계수 R²", f"{r2:.3f}")
+
+st.info(
+    f"회귀식: y = {s2:.2f}x + {i2:.2f}"
+)
+
+with st.expander("공공자전거 원본 데이터"):
+    st.dataframe(bike, use_container_width=True)
+
+st.divider()
+
+# =====================================
+# 3. 기온과 자전거 대여량 관계
+# =====================================
+
+st.header("☀️ 3. 기온과 공공자전거 대여량의 관계")
+
+st.write(
+    "월별 평균기온과 월별 평균 일일 대여 건수를 "
+    "하나의 그래프로 비교합니다."
+)
+
+fig3, s3, i3, r3 = regression_graph(
+    merged,
+    "평균기온(°C)",
+    "월별_평균대여건수",
+    "월별 평균기온 (℃)",
+    "월별 평균 일일 대여 건수 (건)",
+    "평균기온과 공공자전거 대여량의 관계",
+    merged["일시"].dt.strftime("%Y년 %m월")
+)
+
+st.plotly_chart(
+    fig3,
+    use_container_width=True
+)
+
+c1, c2, c3 = st.columns(3)
+
+c1.metric("기울기", f"{s3:,.2f} 건/℃")
+c2.metric("절편", f"{i3:,.2f} 건")
+c3.metric("결정계수 R²", f"{r3:.3f}")
+
+st.info(
+    f"회귀식: y = {s3:.2f}x + {i3:.2f}"
+)
+
+if s3 > 0:
+    st.write(
+        "기온이 높아질수록 자전거 대여 건수가 "
+        "증가하는 방향의 관계가 나타났습니다."
+    )
+elif s3 < 0:
+    st.write(
+        "기온이 높아질수록 자전거 대여 건수가 "
+        "감소하는 방향의 관계가 나타났습니다."
+    )
+else:
+    st.write("회귀 직선의 기울기가 0에 가깝습니다.")
+
+st.warning(
+    "주의: 이 분석은 월별 데이터 6개를 이용한 결과입니다. "
+    "기온이 자전거 대여량 변화의 원인이라고 단정할 수 없으며, "
+    "강수량이나 요일 등 다른 요인도 영향을 줄 수 있습니다."
+)
+
+with st.expander("결합한 데이터 확인하기"):
+    st.dataframe(merged, use_container_width=True)
+
+st.divider()
+
+# =====================================
+# 4. 회귀 결과 비교
+# =====================================
+
+st.header("📋 4. 선형회귀 결과 정리")
+
+result = pd.DataFrame({
+    "분석": [
+        "월별 평균기온",
+        "일별 자전거 대여량",
+        "기온과 자전거 대여량"
+    ],
+    "기울기": [s1, s2, s3],
+    "절편": [i1, i2, i3],
+    "결정계수(R²)": [r1, r2, r3]
+})
+
+st.dataframe(
+    result.style.format({
+        "기울기": "{:.3f}",
+        "절편": "{:.3f}",
+        "결정계수(R²)": "{:.3f}"
+    }),
+    use_container_width=True
+)
+
+st.subheader("💡 선형회귀에서 알아야 할 개념")
+
+st.markdown("""
+- **기울기:** x값이 1 증가할 때 y값이 얼마나 변하는지 나타냅니다.
+- **절편:** x값이 0일 때 회귀 직선이 예측하는 y값입니다.
+- **결정계수(R²):** 회귀모형이 데이터의 변동을 얼마나 설명하는지 나타냅니다.
+- **회귀 직선:** 실제 데이터의 전체적인 경향을 가장 잘 나타내는 직선입니다.
+""")
+
+st.divider()
+
+st.header("📝 분석을 통해 생각해 보기")
+
+st.markdown("""
+1. 월별 평균기온은 어떤 방향으로 변화했을까?
+2. 공공자전거 대여 건수는 날짜에 따라 증가했을까, 감소했을까?
+3. 기온이 높아지면 공공자전거 이용량도 증가할까?
+4. 회귀 직선이 실제 데이터의 모든 변화를 설명하지 못하는 이유는 무엇일까?
+""")
+
+st.success("모든 선형회귀 그래프 분석이 완료되었습니다!")
