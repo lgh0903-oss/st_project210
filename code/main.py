@@ -1,4 +1,64 @@
-# 주춤한 구간 요약표
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from sklearn.linear_model import LinearRegression
+
+st.set_page_config(page_title="공공자전거와 기온 분석", layout="wide")
+
+# ============================================================
+# 0. 공통 함수 및 데이터 불러오기 (복원된 앞부분)
+# ============================================================
+def fit_line(x, y):
+    model = LinearRegression()
+    X_reshaped = x.reshape(-1, 1)
+    model.fit(X_reshaped, y)
+    pred = model.predict(X_reshaped)
+    slope = float(model.coef_[0])
+    intercept = float(model.intercept_)
+    r2 = float(model.score(X_reshaped, y))
+    return model, pred, slope, intercept, r2
+
+def add_metric_row(slope, intercept, r2, unit):
+    c1, c2, c3 = st.columns(3)
+    c1.metric("기울기 (변화율)", f"{slope:,.2f} {unit}")
+    c2.metric("절편 (기본값)", f"{intercept:,.2f}")
+    c3.metric("결정계수 (R²)", f"{r2:.3f}")
+
+# ★ 실제 깃허브에 있는 데이터 파일 경로와 컬럼명에 맞게 필요시 수정하세요!
+@st.cache_data
+def load_data():
+    # 예시 데이터 경로 (본인의 csv 파일 경로가 다르면 수정해 주세요)
+    bike = pd.read_csv("data/bike.csv")
+    weather = pd.read_csv("data/weather.csv")
+    
+    bike["대여일자"] = pd.to_datetime(bike["대여일자"])
+    bike = bike.sort_values("대여일자").reset_index(drop=True)
+    bike["7일 이동평균"] = bike["대여건수"].rolling(window=7, min_periods=1).mean()
+    bike["월"] = bike["대여일자"].dt.month
+    
+    monthly_bike = bike.groupby("월").agg(
+        월별_평균_일대여건수=("대여건수", "mean"),
+        월별_총대여건수=("대여건수", "sum"),
+        관측일수=("대여건수", "count")
+    ).reset_index()
+    
+    monthly = pd.merge(weather, monthly_bike, on="월", how="inner")
+    return bike, monthly
+
+try:
+    bike, monthly = load_data()
+except Exception as e:
+    st.error(f"데이터 파일을 불러오는 중 오류가 발생했습니다: {e}")
+    st.stop()
+
+# 주춤한 구간(7일 이동평균 대비 대여건수가 크게 떨어진 날 등) 인덱스 찾기
+bike["차이"] = bike["대여건수"] - bike["7일 이동평균"]
+selected_lows = bike.index[bike["차이"] < -30000].tolist()
+
+# ============================================================
+# 주춤한 구간 요약표 (사용자님이 주신 코드 시작 부분)
+# ============================================================
 if selected_lows:
     low_summary = bike.iloc[selected_lows][["대여일자", "대여건수", "7일 이동평균"]].copy()
     low_summary["대여일자"] = low_summary["대여일자"].dt.strftime("%Y-%m-%d")
